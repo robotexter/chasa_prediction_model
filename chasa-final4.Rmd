@@ -1,0 +1,142 @@
+---
+  title: "R Notebook"
+output:
+  pdf_document: default
+html_document:
+  df_print: paged
+---
+  
+  ```{r}
+if(!require(pacman)){install.packages("pacman");require(pacman)}
+#Install/load tons of packages this is faster and better narower intervals
+p_load(brms,loo,reticulate,ggplot2,gridExtra,data.table,mltools,tidyr,rstan,coda,tidyverse,haven,ggmcmc,mcmcplots,readr,zoo, stringr,summarytools,RColorBrewer,broom,dplyr,purrr,rcompanion) # this will download and install all the required packages. if any fail sinply remove the "#" from that point.
+```
+
+
+```{r}
+df2 <- read.csv("~/miniconda3/rechasadata/Disease-Weather-final1.csv")# this is the original database you will need to get the correct path to it on your computer.
+str(df2)
+
+#corelations
+x<-df2[4:12]
+cor(x, use="complete.obs", method="pearson")## note mean temp, humidity and max temp lets leave mean temp out of the regressions
+#scaling
+colMeans(x)
+y<-scale(x)# this is a very important step
+colMeans(y)
+cor(y, use="complete.obs", method="pearson")
+say<-df2[-c(4:12)]
+dfs<-cbind(say,y)
+
+sel2<-as.data.frame(df2)
+
+sel2$dised2 <- as.integer(as.factor(sel2$disease))
+sel2<-sel2[!(sel2$disease=="Yellow_fever"), ]# only two values found these are removed 
+sel2<-sel2[!(sel2$disease=="Guinea_worm"), ]# only one observation found makes randomisation difficult
+sel2$disease <- factor(sel2$disease)
+##clean up
+rm(x,y,dfs,say,df2)
+set.seed(1234)
+
+## random numbers
+mask<-sample(1:310,155,replace=F) 
+sltr1 = sel2[sel2$ID %in% mask, ]
+slts1 = sel2[!(sel2$ID %in% mask), ]
+sltr1<-na.omit(sltr1)
+slts1<-na.omit(slts1)
+
+brmfit1<-brm(total ~ preasure+rain+sun+humidity+max_temp+ min_temp+wind_gust+ mean_wind_spd +disease+located+(1|location), 
+             chains = 6, cores = 3, seed = 13, iter = 20000, prior = prior(cauchy(0,2.5)), family=negbinomial,
+             data=sltr1, refresh= -1,control = list(adapt_delta = 0.9999, max_treedepth = 25),thin=1)
+
+print(brmfit1, digits = 3)
+
+```
+
+diagnostics
+
+```{r}
+
+#trace check
+
+mcmc_plot(brmfit1, type = "trace")
+mcmc_plot(brmfit1, type = "nuts_acceptance")
+mcmc_plot(brmfit1, type = "nuts_divergence")
+#
+modelposteriorneg <- as.mcmc(brmfit1) # with the as.mcmc() command we can use all the CODA package convergence statistics and plotting.
+gelman.diag(modelposteriorneg[, 1:23])
+
+## plot shrinkage
+gelman.plot(modelposteriorneg[, 1:23])
+
+## diagnostic
+geweke.diag(modelposteriorneg[, 1:23])
+
+geweke.plot(modelposteriorneg[, 1:23])
+
+## step 4
+
+mcmc_plot(brmfit1, type = "hist")
+# autocorelation 
+autocorr.diag(modelposteriorneg[,1:23], lags = c(0, 1,2,3,4, 5, 10, 50))
+## density
+
+mcmc_plot(brmfit1, type = "dens")
+
+##loo for DIC
+
+l1<-loo(brmfit1)
+l1
+loo11 <- loo(brmfit1, k_threshold=0.7)
+loo11
+```
+prediction
+```{r}
+#prediction next
+t16<-predict(brmfit1, newdata = slts1, allow_new_levels=TRUE)
+sltest12<-cbind(slts1,t16)
+
+p5 <- ggplot(data=sltest12, aes(y=total, fill=disease)) + 
+  geom_boxplot()
+
+p7 <- ggplot(sltest12, aes(y=Estimate,fill=disease)) + 
+  geom_boxplot()
+
+
+grid.arrange(p5, p7, ncol = 2)
+ggplot(sltest12, aes(total,Estimate))+geom_point() + geom_smooth()+facet_wrap(~ disease, ncol=2, scale="free")
+#T.Test
+r1 <- sltest12 %>% 
+  group_by(disease) %>% 
+  do(tidy(t.test(.$Estimate, 
+                 .$total, 
+                 mu = 0, 
+                 alt = "two.sided", 
+                 paired = TRUE, 
+                 conf.level = 0.95)))
+r1
+#wilcoxan rank test by diases
+r2 <- sltest12 %>% 
+  group_by(disease) %>% 
+  do(tidy(wilcox.test(.$Estimate, 
+                      .$total, 
+                      paired = TRUE, 
+                      conf.level = 0.95)))
+r2
+# Effect sizes
+r3 <- sltest12 %>% 
+  group_by(disease) %>% 
+  do(tidy(wilcoxonR(x=.$total, g = .$Estimate, 
+                    ci = FALSE,reportIncomplete = TRUE,type = "perc",na.rm=TRUE)))
+r3
+# predictions pictorial
+sltest12<-sltest12[,c(1,2,4:16,18:20,3,17)]
+xl<-sltest12 %>% gather(key="Comparisons", value="counts", 19:20)
+
+p9 <- ggplot(xl) +
+  geom_boxplot(aes(x=Comparisons, y=counts, color=disease))
+p9 # places the estimates and original counts on the same scale.
+```
+```{r}
+sessionInfo()
+```
