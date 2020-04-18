@@ -14,7 +14,7 @@ p_load(brms,loo,reticulate,ggplot2,gridExtra,data.table,mltools,tidyr,rstan,coda
 
 
 ```{r}
-df2 <- read.csv("~/miniconda3/rechasadata/Disease-Weather-final1.csv")# this is the original database you will need to get the correct path to it on your computer.
+df2 <- read.csv("Disease-Weather-final1.csv")# this is the original database you will need to get the correct path to it on your computer.
 str(df2)
 
 #corelations
